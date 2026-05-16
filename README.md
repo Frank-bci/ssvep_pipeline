@@ -51,6 +51,9 @@ The UI is a full simulated SSVEP typing surface:
 - Click a target, or use arrow keys plus Enter, to simulate gaze during hardware-free testing.
 - Press Space to start or pause the realtime loop.
 - Decoded commands are committed into the text output area after a short dwell gate, which avoids runaway repeated letters while testing.
+- Low-confidence decisions are blocked by score and top-two margin checks before the dwell gate can advance.
+- The side panel reports typing progress, confidence status, CPM, online accuracy, and an estimated ITR.
+- When paused, stimuli stop flickering and switch to a static state so the runtime status is visually unambiguous.
 
 ## Hardware Swap Point
 

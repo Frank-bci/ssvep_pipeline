@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import font
@@ -23,6 +24,8 @@ GRID_ROWS = 5
 GRID_COLS = 6
 DWELL_TICKS = 6
 REPEAT_COOLDOWN_TICKS = 10
+MIN_COMMIT_SCORE = 0.65
+MIN_COMMIT_MARGIN = 0.06
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,22 @@ class StimulusTarget:
     freq: float
     row: int
     col: int
+
+
+@dataclass
+class SessionStats:
+    started_at: float | None = None
+    decisions: int = 0
+    correct_decisions: int = 0
+    rejected_decisions: int = 0
+    typed_commands: int = 0
+
+    def reset(self) -> None:
+        self.started_at = time.perf_counter()
+        self.decisions = 0
+        self.correct_decisions = 0
+        self.rejected_decisions = 0
+        self.typed_commands = 0
 
 
 class SSVEPSpellerApp:
@@ -62,6 +81,8 @@ class SSVEPSpellerApp:
         self.dwell_label: str | None = None
         self.dwell_count = 0
         self.running = False
+        self.last_scores: list[float] = []
+        self.stats = SessionStats()
         self.canvas_items: list[dict[str, int]] = []
         self.score_rows: list[dict[str, int]] = []
 
@@ -69,12 +90,15 @@ class SSVEPSpellerApp:
         self.target_var = tk.StringVar(value="")
         self.decoded_var = tk.StringVar(value="Waiting")
         self.commit_var = tk.StringVar(value="Hold target to type")
+        self.quality_var = tk.StringVar(value="Confidence idle")
+        self.metrics_var = tk.StringVar(value="CPM 0.0 | Acc -- | ITR --")
         self.output_var = tk.StringVar(value="")
         self.placeholder_var = tk.StringVar(value="Decoded text appears here")
 
         self._build_ui()
         self._select_target(0)
         self._draw_stimuli()
+        self._set_static_stimuli()
 
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind("<space>", lambda _: self.toggle())
@@ -156,6 +180,9 @@ class SSVEPSpellerApp:
         self._metric(panel, "Simulated gaze", self.target_var)
         self._metric(panel, "Decoded command", self.decoded_var)
         self._metric(panel, "Typing gate", self.commit_var, value_size=15)
+        self._build_dwell_meter(panel)
+        self._metric(panel, "Decision quality", self.quality_var, value_size=14)
+        self._metric(panel, "Session metrics", self.metrics_var, value_size=13)
         self._metric(panel, "Pipeline latency", self.status_var, value_size=17)
 
         tk.Frame(panel, bg="#2c3742", height=1).pack(fill="x", pady=(8, 18))
@@ -168,9 +195,14 @@ class SSVEPSpellerApp:
             font=("Helvetica", 14, "bold"),
         ).pack(fill="x", pady=(0, 10))
 
-        self.score_canvas = tk.Canvas(panel, bg=SURFACE, highlightthickness=0, height=310)
+        self.score_canvas = tk.Canvas(panel, bg=SURFACE, highlightthickness=0, height=230)
         self.score_canvas.pack(fill="x")
         self._draw_empty_scores()
+
+    def _build_dwell_meter(self, parent: tk.Widget) -> None:
+        self.dwell_canvas = tk.Canvas(parent, bg=SURFACE, highlightthickness=0, height=12)
+        self.dwell_canvas.pack(fill="x", pady=(0, 10))
+        self._render_dwell_meter(0.0)
 
     def _control_button(self, parent: tk.Widget, text: str, color: str, command) -> tk.Label:
         button = tk.Label(
@@ -203,7 +235,7 @@ class SSVEPSpellerApp:
             fg=TEXT,
             anchor="w",
             font=("Helvetica", value_size, "bold"),
-        ).pack(fill="x", pady=(5, 18))
+        ).pack(fill="x", pady=(3, 10))
 
     def _draw_stimuli(self) -> None:
         canvas = self.stimulus_canvas
@@ -244,6 +276,8 @@ class SSVEPSpellerApp:
                 font=("Helvetica", self._cell_freq_size(cell_w), "bold"),
             )
             self.canvas_items.append({"rect": rect, "symbol": symbol, "freq": freq})
+        if not self.running:
+            self._set_static_stimuli()
 
     def _cell_symbol_size(self, cell_w: float) -> int:
         return max(18, min(30, int(cell_w / 4.8)))
@@ -274,6 +308,8 @@ class SSVEPSpellerApp:
         self.target_var.set(f"{target.label}  {target.freq:.1f}Hz")
         self._reset_dwell()
         self._update_selection_outline()
+        if not self.running:
+            self._set_static_stimuli()
 
     def _update_selection_outline(self) -> None:
         if not self.canvas_items:
@@ -312,12 +348,20 @@ class SSVEPSpellerApp:
             self.source.stop()
             self.start_button.configure(text="Start", bg=GREEN)
             self.status_var.set("Paused")
+            self.decoded_var.set("Paused")
+            self.quality_var.set("Paused")
+            self._reset_dwell()
+            self._set_static_stimuli()
             return
 
         self.running = True
+        self.stats.reset()
         self.pipeline.source.start()
         self.start_button.configure(text="Pause", bg=ORANGE)
         self.status_var.set("Running")
+        self.decoded_var.set("Buffering")
+        self.quality_var.set("Waiting for window")
+        self.metrics_var.set("CPM 0.0 | Acc -- | ITR --")
         self._decode_loop()
         self._stimulus_loop()
 
@@ -327,6 +371,8 @@ class SSVEPSpellerApp:
         self.placeholder_var.set("Decoded text appears here")
         self.commit_cooldown = 0
         self._reset_dwell()
+        self.stats.reset()
+        self.metrics_var.set("CPM 0.0 | Acc -- | ITR --")
 
     def _decode_loop(self) -> None:
         if not self.running:
@@ -335,13 +381,23 @@ class SSVEPSpellerApp:
         result = self.pipeline.step()
         if result is not None:
             self._render_result(result)
-            self._commit_result(result.label)
+            quality = self._decision_quality(result)
+            self._update_stats(result)
+            if quality["accepted"]:
+                self._commit_result(result.label)
+            else:
+                self.stats.rejected_decisions += 1
+                self._reset_dwell(f"Hold: {quality['reason']}")
+            self._render_metrics()
         else:
             self.status_var.set("Buffering")
 
         self.root.after(int(self.config.step_sec * 1000), self._decode_loop)
 
     def _stimulus_loop(self) -> None:
+        if not self.running:
+            self._set_static_stimuli()
+            return
         if not self.canvas_items:
             self._draw_stimuli()
 
@@ -360,11 +416,56 @@ class SSVEPSpellerApp:
         if self.running:
             self.root.after(16, self._stimulus_loop)
 
+    def _set_static_stimuli(self) -> None:
+        if not self.canvas_items:
+            return
+        for index, items in enumerate(self.canvas_items):
+            selected = index == self.focus_index
+            fill = "#2a3037" if selected else "#3b424b"
+            text_color = AMBER if selected else "#d6dde5"
+            self.stimulus_canvas.itemconfigure(items["rect"], fill=fill)
+            self.stimulus_canvas.itemconfigure(items["symbol"], fill=text_color)
+            self.stimulus_canvas.itemconfigure(items["freq"], fill=text_color)
+
     def _render_result(self, result: PipelineResult) -> None:
         score = result.scores[result.stable_prediction]
         self.decoded_var.set(f"{result.label}  {score:.3f}")
         self.status_var.set(f"{result.latency_ms:.1f} ms")
+        self.last_scores = result.scores
         self._render_scores(result)
+
+    def _decision_quality(self, result: PipelineResult) -> dict[str, object]:
+        ranked = sorted(
+            enumerate(result.scores),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        top_index, top_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        stable_score = result.scores[result.stable_prediction]
+        margin = top_score - second_score
+
+        if result.stable_prediction != top_index:
+            reason = f"unstable top {self.targets[top_index].label}"
+            accepted = False
+        elif stable_score < MIN_COMMIT_SCORE:
+            reason = f"score {stable_score:.3f}"
+            accepted = False
+        elif margin < MIN_COMMIT_MARGIN:
+            reason = f"margin {margin:.3f}"
+            accepted = False
+        else:
+            reason = f"score {stable_score:.3f}, margin {margin:.3f}"
+            accepted = True
+
+        self.quality_var.set(("OK " if accepted else "Blocked ") + reason)
+        return {
+            "accepted": accepted,
+            "reason": reason,
+            "top_index": top_index,
+            "top_score": top_score,
+            "margin": margin,
+        }
 
     def _render_scores(self, result: PipelineResult) -> None:
         canvas = self.score_canvas
@@ -374,7 +475,7 @@ class SSVEPSpellerApp:
             enumerate(result.scores),
             key=lambda item: item[1],
             reverse=True,
-        )[:8]
+        )[:6]
         max_score = max((score for _, score in rows), default=1.0)
 
         y = 2
@@ -403,6 +504,38 @@ class SSVEPSpellerApp:
                 outline="",
             )
             y += 38
+
+    def _update_stats(self, result: PipelineResult) -> None:
+        self.stats.decisions += 1
+        target_label = self.targets[self.focus_index].label
+        if result.label == target_label:
+            self.stats.correct_decisions += 1
+
+    def _render_metrics(self) -> None:
+        elapsed = self._elapsed_minutes()
+        cpm = self.stats.typed_commands / elapsed if elapsed > 0 else 0.0
+        accuracy = self.stats.correct_decisions / self.stats.decisions if self.stats.decisions else 0.0
+        itr = self._itr_bits_per_minute(accuracy, max(elapsed, 1e-6))
+        acc_text = f"{accuracy * 100:.1f}%" if self.stats.decisions else "--"
+        itr_text = f"{itr:.1f}" if self.stats.decisions else "--"
+        self.metrics_var.set(f"CPM {cpm:.1f} | Acc {acc_text} | ITR {itr_text} bpm")
+
+    def _elapsed_minutes(self) -> float:
+        if self.stats.started_at is None:
+            return 0.0
+        return max((time.perf_counter() - self.stats.started_at) / 60.0, 0.0)
+
+    def _itr_bits_per_minute(self, accuracy: float, elapsed_minutes: float) -> float:
+        if self.stats.decisions == 0 or self.stats.typed_commands == 0:
+            return 0.0
+        classes = len(self.targets)
+        p = min(max(accuracy, 1e-6), 1.0 - 1e-6)
+        bits = (
+            math.log2(classes)
+            + p * math.log2(p)
+            + (1 - p) * math.log2((1 - p) / (classes - 1))
+        )
+        return max(0.0, bits * self.stats.typed_commands / elapsed_minutes)
 
     def _commit_result(self, label: str) -> None:
         if label != self.dwell_label:
@@ -438,19 +571,41 @@ class SSVEPSpellerApp:
         self.output_var.set(self.output)
         self.dwell_count = 0
         self.commit_cooldown = REPEAT_COOLDOWN_TICKS
+        self.stats.typed_commands += 1
         self.commit_var.set(f"Typed {label}")
+        self._render_dwell_meter(1.0)
 
-    def _reset_dwell(self) -> None:
+    def _reset_dwell(self, message: str = "Hold target to type") -> None:
         self.dwell_label = None
         self.dwell_count = 0
-        self.commit_var.set("Hold target to type")
+        self.commit_var.set(message)
+        self._render_dwell_meter(0.0)
 
     def _update_commit_progress(self) -> None:
         if not self.dwell_label:
             self.commit_var.set("Hold target to type")
+            self._render_dwell_meter(0.0)
             return
-        progress = min(100, int(self.dwell_count / DWELL_TICKS * 100))
+        ratio = min(1.0, self.dwell_count / DWELL_TICKS)
+        progress = int(ratio * 100)
         self.commit_var.set(f"{self.dwell_label} {progress}%")
+        self._render_dwell_meter(ratio)
+
+    def _render_dwell_meter(self, ratio: float) -> None:
+        if not hasattr(self, "dwell_canvas"):
+            return
+        canvas = self.dwell_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 280)
+        canvas.create_rectangle(0, 2, width, 10, fill="#26313c", outline="")
+        canvas.create_rectangle(
+            0,
+            2,
+            width * max(0.0, min(1.0, ratio)),
+            10,
+            fill=AMBER,
+            outline="",
+        )
 
     def close(self) -> None:
         self.running = False
