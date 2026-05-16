@@ -27,8 +27,8 @@ DWELL_TICKS = 9
 REPEAT_COOLDOWN_TICKS = 18
 MIN_COMMIT_SCORE = 0.65
 MIN_COMMIT_MARGIN = 0.035
-FLICKER_LOW = 82
-FLICKER_HIGH = 198
+FLICKER_LOW = 108
+FLICKER_HIGH = 178
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ class SSVEPSpellerApp:
 
         self.targets = self._build_targets()
         self.config = PipelineConfig(
-            window_sec=1.2,
+            window_sec=1.5,
             target_freqs=tuple(target.freq for target in self.targets),
             labels=tuple(target.label for target in self.targets),
             decision_history=4,
