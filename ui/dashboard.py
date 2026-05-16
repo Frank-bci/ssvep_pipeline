@@ -277,27 +277,17 @@ class SSVEPSpellerApp:
             )
             symbol = canvas.create_text(
                 (x1 + x2) / 2,
-                y1 + cell_h * 0.42,
+                (y1 + y2) / 2,
                 text=self._symbol_text(target.label),
                 fill="#10151a",
                 font=("Helvetica", self._cell_symbol_size(cell_w), "bold"),
             )
-            freq = canvas.create_text(
-                (x1 + x2) / 2,
-                y1 + cell_h * 0.66,
-                text=f"{target.freq:.1f} Hz",
-                fill="#10151a",
-                font=("Helvetica", self._cell_freq_size(cell_w), "bold"),
-            )
-            self.canvas_items.append({"rect": rect, "symbol": symbol, "freq": freq})
+            self.canvas_items.append({"rect": rect, "symbol": symbol})
         if not self.running:
             self._set_static_stimuli()
 
     def _cell_symbol_size(self, cell_w: float) -> int:
-        return max(18, min(30, int(cell_w / 4.8)))
-
-    def _cell_freq_size(self, cell_w: float) -> int:
-        return max(15, min(25, int(cell_w / 5.6)))
+        return max(24, min(42, int(cell_w / 3.6)))
 
     def _symbol_text(self, label: str) -> str:
         if label == "SPACE":
@@ -434,7 +424,6 @@ class SSVEPSpellerApp:
                 text_color = AMBER
             self.stimulus_canvas.itemconfigure(items["rect"], fill=fill)
             self.stimulus_canvas.itemconfigure(items["symbol"], fill=text_color)
-            self.stimulus_canvas.itemconfigure(items["freq"], fill=text_color)
 
         if self.running:
             self.root.after(16, self._stimulus_loop)
@@ -448,7 +437,6 @@ class SSVEPSpellerApp:
             text_color = AMBER if selected else "#d6dde5"
             self.stimulus_canvas.itemconfigure(items["rect"], fill=fill)
             self.stimulus_canvas.itemconfigure(items["symbol"], fill=text_color)
-            self.stimulus_canvas.itemconfigure(items["freq"], fill=text_color)
 
     def _render_result(self, result: PipelineResult) -> None:
         score = result.scores[result.stable_prediction]

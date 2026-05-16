@@ -48,6 +48,7 @@ The UI is a full simulated SSVEP typing surface:
 
 - 30 flickering targets: `A-Z`, `SPACE`, `DEL`, `CLR`, and `SEND`.
 - Each target owns a unique low-frequency comfort stimulus from 6.0 to 11.8 Hz.
+- The on-screen keyboard shows only symbols; frequencies remain in the side panel for debugging.
 - Click a target, or use arrow keys plus Enter, to simulate gaze during hardware-free testing.
 - Press Space to start or pause the realtime loop.
 - Decoded commands are committed into the text output area after a short dwell gate, which avoids runaway repeated letters while testing.
