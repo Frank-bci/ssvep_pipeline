@@ -22,10 +22,12 @@ ORANGE = "#b86b31"
 GRID_GAP = 12
 GRID_ROWS = 5
 GRID_COLS = 6
-DWELL_TICKS = 6
-REPEAT_COOLDOWN_TICKS = 10
+DWELL_TICKS = 9
+REPEAT_COOLDOWN_TICKS = 18
 MIN_COMMIT_SCORE = 0.65
 MIN_COMMIT_MARGIN = 0.035
+FLICKER_LOW = 82
+FLICKER_HIGH = 198
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class SSVEPSpellerApp:
 
         self.targets = self._build_targets()
         self.config = PipelineConfig(
+            window_sec=1.2,
             target_freqs=tuple(target.freq for target in self.targets),
             labels=tuple(target.label for target in self.targets),
             decision_history=4,
@@ -80,6 +83,7 @@ class SSVEPSpellerApp:
         self.commit_cooldown = 0
         self.dwell_label: str | None = None
         self.dwell_count = 0
+        self.locked_label: str | None = None
         self.running = False
         self.last_scores: list[float] = []
         self.stats = SessionStats()
@@ -306,6 +310,7 @@ class SSVEPSpellerApp:
         target = self.targets[self.focus_index]
         self.source.set_target_frequency(target.freq)
         self.target_var.set(f"{target.label}  {target.freq:.1f}Hz")
+        self.locked_label = None
         self._reset_dwell()
         self._update_selection_outline()
         if not self.running:
@@ -370,6 +375,7 @@ class SSVEPSpellerApp:
         self.output_var.set("")
         self.placeholder_var.set("Decoded text appears here")
         self.commit_cooldown = 0
+        self.locked_label = None
         self._reset_dwell()
         self.stats.reset()
         self.metrics_var.set("CPM 0.0 | Acc -- | ITR --")
@@ -404,10 +410,10 @@ class SSVEPSpellerApp:
         now = self.root.tk.call("clock", "milliseconds") / 1000.0
         for index, (target, items) in enumerate(zip(self.targets, self.canvas_items)):
             brightness = 0.5 + 0.5 * math.sin(2 * math.pi * target.freq * now)
-            value = int(30 + brightness * 215)
+            value = int(FLICKER_LOW + brightness * (FLICKER_HIGH - FLICKER_LOW))
             fill = f"#{value:02x}{value:02x}{value:02x}"
-            text_color = "#0b1015" if value > 142 else "#f8fafc"
-            if index == self.focus_index and value <= 142:
+            text_color = "#0b1015" if value > 145 else "#f8fafc"
+            if index == self.focus_index and value <= 145:
                 text_color = AMBER
             self.stimulus_canvas.itemconfigure(items["rect"], fill=fill)
             self.stimulus_canvas.itemconfigure(items["symbol"], fill=text_color)
@@ -538,6 +544,10 @@ class SSVEPSpellerApp:
         return max(0.0, bits * self.stats.typed_commands / elapsed_minutes)
 
     def _commit_result(self, label: str) -> None:
+        if label == self.locked_label:
+            self._reset_dwell(f"Re-select {label} to repeat")
+            return
+
         if label != self.dwell_label:
             self.dwell_label = label
             self.dwell_count = 1
@@ -571,6 +581,7 @@ class SSVEPSpellerApp:
         self.output_var.set(self.output)
         self.dwell_count = 0
         self.commit_cooldown = REPEAT_COOLDOWN_TICKS
+        self.locked_label = label
         self.stats.typed_commands += 1
         self.commit_var.set(f"Typed {label}")
         self._render_dwell_meter(1.0)

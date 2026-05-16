@@ -47,11 +47,12 @@ python main.py --ui
 The UI is a full simulated SSVEP typing surface:
 
 - 30 flickering targets: `A-Z`, `SPACE`, `DEL`, `CLR`, and `SEND`.
-- Each target owns a unique stimulus frequency.
+- Each target owns a unique stimulus frequency with wider 0.3 Hz spacing for more stable basic CCA decoding.
 - Click a target, or use arrow keys plus Enter, to simulate gaze during hardware-free testing.
 - Press Space to start or pause the realtime loop.
 - Decoded commands are committed into the text output area after a short dwell gate, which avoids runaway repeated letters while testing.
-- Low-confidence decisions are blocked by score and top-two margin checks before the dwell gate can advance. The margin is tuned for the current 0.2 Hz target spacing.
+- Low-confidence decisions are blocked by score and top-two margin checks before the dwell gate can advance.
+- The UI uses reduced-contrast flicker and single-shot selection: hold to type once, then re-select the same target if you want to repeat it.
 - The side panel reports typing progress, confidence status, CPM, online accuracy, and an estimated ITR.
 - When paused, stimuli stop flickering and switch to a static state so the runtime status is visually unambiguous.
 

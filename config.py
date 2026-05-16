@@ -17,7 +17,7 @@ CHANNEL_NAMES = ["O1", "Oz", "O2"]
 LABELS = ["LEFT", "CENTER", "RIGHT"]
 
 SPELLER_SYMBOLS = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + ("SPACE", "DEL", "CLR", "SEND")
-SPELLER_FREQS = tuple(8.0 + 0.2 * index for index in range(len(SPELLER_SYMBOLS)))
+SPELLER_FREQS = tuple(8.0 + 0.3 * index for index in range(len(SPELLER_SYMBOLS)))
 
 
 @dataclass(frozen=True)
