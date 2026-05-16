@@ -22,6 +22,7 @@ ORANGE = "#b86b31"
 GRID_GAP = 12
 GRID_ROWS = 5
 GRID_COLS = 6
+MAX_GRID_WIDTH = 1380
 DWELL_TICKS = 9
 REPEAT_COOLDOWN_TICKS = 18
 MIN_COMMIT_SCORE = 0.65
@@ -59,7 +60,7 @@ class SSVEPSpellerApp:
         self.root = root
         self.root.title("SSVEP Realtime Speller")
         self.root.geometry("1240x820")
-        self.root.minsize(1040, 720)
+        self.root.minsize(1120, 760)
         self.root.configure(bg=BG)
 
         self.targets = self._build_targets()
@@ -98,6 +99,7 @@ class SSVEPSpellerApp:
         self.metrics_var = tk.StringVar(value="CPM 0.0 | Acc -- | ITR --")
         self.output_var = tk.StringVar(value="")
         self.placeholder_var = tk.StringVar(value="Decoded text appears here")
+        self.lock_var = tk.StringVar(value="No lock")
 
         self._build_ui()
         self._select_target(0)
@@ -163,7 +165,7 @@ class SSVEPSpellerApp:
             height=2,
             justify="left",
         )
-        self.output_label.pack(fill="x", pady=(6, 0))
+        self.output_label.pack(fill="x", pady=(4, 0))
         output_frame.bind(
             "<Configure>",
             lambda event: self.output_label.configure(wraplength=max(200, event.width - 40)),
@@ -172,8 +174,13 @@ class SSVEPSpellerApp:
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill="both", expand=True, padx=26, pady=(0, 26))
 
-        self.stimulus_canvas = tk.Canvas(body, bg=BG, highlightthickness=0)
-        self.stimulus_canvas.pack(side="left", fill="both", expand=True)
+        grid_shell = tk.Frame(body, bg=BG)
+        grid_shell.pack(side="left", fill="both", expand=True)
+        grid_shell.rowconfigure(0, weight=1)
+        grid_shell.columnconfigure(0, weight=1)
+
+        self.stimulus_canvas = tk.Canvas(grid_shell, bg=BG, highlightthickness=0)
+        self.stimulus_canvas.grid(row=0, column=0, sticky="nsew")
         self.stimulus_canvas.bind("<Configure>", lambda _: self._draw_stimuli())
         self.stimulus_canvas.bind("<Button-1>", self._on_canvas_click)
 
@@ -185,6 +192,7 @@ class SSVEPSpellerApp:
         self._metric(panel, "Decoded command", self.decoded_var)
         self._metric(panel, "Typing gate", self.commit_var, value_size=15)
         self._build_dwell_meter(panel)
+        self._metric(panel, "Repeat lock", self.lock_var, value_size=13)
         self._metric(panel, "Decision quality", self.quality_var, value_size=14)
         self._metric(panel, "Session metrics", self.metrics_var, value_size=13)
         self._metric(panel, "Pipeline latency", self.status_var, value_size=17)
@@ -246,13 +254,15 @@ class SSVEPSpellerApp:
         canvas.delete("all")
         self.canvas_items.clear()
 
-        width = max(canvas.winfo_width(), 1)
+        available_width = max(canvas.winfo_width(), 1)
         height = max(canvas.winfo_height(), 1)
+        width = min(available_width, MAX_GRID_WIDTH)
+        x_offset = (available_width - width) / 2
         cell_w = (width - GRID_GAP * (GRID_COLS + 1)) / GRID_COLS
         cell_h = (height - GRID_GAP * (GRID_ROWS + 1)) / GRID_ROWS
 
         for index, target in enumerate(self.targets):
-            x1 = GRID_GAP + target.col * (cell_w + GRID_GAP)
+            x1 = x_offset + GRID_GAP + target.col * (cell_w + GRID_GAP)
             y1 = GRID_GAP + target.row * (cell_h + GRID_GAP)
             x2 = x1 + cell_w
             y2 = y1 + cell_h
@@ -311,6 +321,7 @@ class SSVEPSpellerApp:
         self.source.set_target_frequency(target.freq)
         self.target_var.set(f"{target.label}  {target.freq:.1f}Hz")
         self.locked_label = None
+        self.lock_var.set("No lock")
         self._reset_dwell()
         self._update_selection_outline()
         if not self.running:
@@ -328,15 +339,20 @@ class SSVEPSpellerApp:
             )
 
     def _on_canvas_click(self, event: tk.Event) -> None:
-        width = max(self.stimulus_canvas.winfo_width(), 1)
+        available_width = max(self.stimulus_canvas.winfo_width(), 1)
         height = max(self.stimulus_canvas.winfo_height(), 1)
+        width = min(available_width, MAX_GRID_WIDTH)
+        x_offset = (available_width - width) / 2
         cell_w = (width - GRID_GAP * (GRID_COLS + 1)) / GRID_COLS
         cell_h = (height - GRID_GAP * (GRID_ROWS + 1)) / GRID_ROWS
-        col = int((event.x - GRID_GAP) // (cell_w + GRID_GAP))
+        local_x = event.x - x_offset
+        if local_x < 0 or local_x > width:
+            return
+        col = int((local_x - GRID_GAP) // (cell_w + GRID_GAP))
         row = int((event.y - GRID_GAP) // (cell_h + GRID_GAP))
         if not 0 <= row < GRID_ROWS or not 0 <= col < GRID_COLS:
             return
-        x_in = (event.x - GRID_GAP) % (cell_w + GRID_GAP)
+        x_in = (local_x - GRID_GAP) % (cell_w + GRID_GAP)
         y_in = (event.y - GRID_GAP) % (cell_h + GRID_GAP)
         if x_in > cell_w or y_in > cell_h:
             return
@@ -376,6 +392,7 @@ class SSVEPSpellerApp:
         self.placeholder_var.set("Decoded text appears here")
         self.commit_cooldown = 0
         self.locked_label = None
+        self.lock_var.set("No lock")
         self._reset_dwell()
         self.stats.reset()
         self.metrics_var.set("CPM 0.0 | Acc -- | ITR --")
@@ -545,7 +562,8 @@ class SSVEPSpellerApp:
 
     def _commit_result(self, label: str) -> None:
         if label == self.locked_label:
-            self._reset_dwell(f"Re-select {label} to repeat")
+            self._reset_dwell(f"Locked {label}")
+            self.lock_var.set(f"{label} typed, re-select to repeat")
             return
 
         if label != self.dwell_label:
@@ -582,6 +600,7 @@ class SSVEPSpellerApp:
         self.dwell_count = 0
         self.commit_cooldown = REPEAT_COOLDOWN_TICKS
         self.locked_label = label
+        self.lock_var.set(f"{label} typed, re-select to repeat")
         self.stats.typed_commands += 1
         self.commit_var.set(f"Typed {label}")
         self._render_dwell_meter(1.0)
