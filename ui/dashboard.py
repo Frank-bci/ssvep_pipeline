@@ -19,6 +19,8 @@ MUTED = "#9aa7b5"
 AMBER = "#f4c542"
 GREEN = "#2f9e64"
 ORANGE = "#b86b31"
+RUNNING_LETTER = "#10151a"
+STATIC_LETTER = "#d6dde5"
 GRID_GAP = 12
 GRID_ROWS = 5
 GRID_COLS = 6
@@ -419,11 +421,8 @@ class SSVEPSpellerApp:
             brightness = 0.5 + 0.5 * math.sin(2 * math.pi * target.freq * now)
             value = int(FLICKER_LOW + brightness * (FLICKER_HIGH - FLICKER_LOW))
             fill = f"#{value:02x}{value:02x}{value:02x}"
-            text_color = "#0b1015" if value > 145 else "#f8fafc"
-            if index == self.focus_index and value <= 145:
-                text_color = AMBER
             self.stimulus_canvas.itemconfigure(items["rect"], fill=fill)
-            self.stimulus_canvas.itemconfigure(items["symbol"], fill=text_color)
+            self.stimulus_canvas.itemconfigure(items["symbol"], fill=RUNNING_LETTER)
 
         if self.running:
             self.root.after(16, self._stimulus_loop)
@@ -434,7 +433,7 @@ class SSVEPSpellerApp:
         for index, items in enumerate(self.canvas_items):
             selected = index == self.focus_index
             fill = "#2a3037" if selected else "#3b424b"
-            text_color = AMBER if selected else "#d6dde5"
+            text_color = AMBER if selected else STATIC_LETTER
             self.stimulus_canvas.itemconfigure(items["rect"], fill=fill)
             self.stimulus_canvas.itemconfigure(items["symbol"], fill=text_color)
 
